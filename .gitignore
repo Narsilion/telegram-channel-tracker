@@ -1,0 +1,14 @@
+.venv/
+.data/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+*.db
+*.db-*
+*.session
+*.session-*
+*.log
+.DS_Store
