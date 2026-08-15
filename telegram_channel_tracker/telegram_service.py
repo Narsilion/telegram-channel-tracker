@@ -11,6 +11,8 @@ from telethon import TelegramClient, events, utils
 from telethon.errors import FloodWaitError
 
 from telegram_channel_tracker.db import Database
+from telegram_channel_tracker.bot_alerts import TelegramBotAlertSender
+from telegram_channel_tracker.email_alerts import GmailAlertSender
 from telegram_channel_tracker.live import LiveBroker
 from telegram_channel_tracker.schemas import StatusResponse, TargetRecord
 from telegram_channel_tracker.settings import Settings
@@ -31,13 +33,19 @@ def should_archive_message(message: Any) -> bool:
 
 
 class TelegramMonitor:
-    def __init__(self, settings: Settings, db: Database, broker: LiveBroker, client: TelegramClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings, db: Database, broker: LiveBroker,
+        client: TelegramClient | None = None, email_sender: GmailAlertSender | None = None,
+        bot_sender: TelegramBotAlertSender | None = None,
+    ) -> None:
         if not settings.api_id or not settings.api_hash:
             raise ValueError("Telegram API credentials are not configured. Run setup first.")
         self.settings = settings
         self.db = db
         self.broker = broker
         self.client = client or TelegramClient(str(settings.session_path), settings.api_id, settings.api_hash)
+        self.email_sender = email_sender or GmailAlertSender(settings)
+        self.bot_sender = bot_sender or TelegramBotAlertSender(settings)
         self._stop = False
         self._entities: dict[int, Any] = {}
         self._reload = asyncio.Event()
@@ -232,6 +240,12 @@ class TelegramMonitor:
         if live and matched_rules and self.settings.saved_messages_alerts:
             for rule in matched_rules:
                 await self._send_saved_alert(post_id, rule.id, rule.name, payload)
+        if live and matched_rules and self.settings.email_alerts:
+            for rule in matched_rules:
+                await self._send_email_alert(post_id, rule.id, rule.name, payload)
+        if live and matched_rules and self.settings.telegram_bot_alerts:
+            for rule in matched_rules:
+                await self._send_bot_alert(post_id, rule.id, rule.name, payload)
         post = self.db.get_post(post_id)
         await self.broker.broadcast(
             {
@@ -293,6 +307,43 @@ class TelegramMonitor:
         except Exception as exc:
             self.db.finish_delivery(post_id, rule_id, destination, str(exc))
             logger.exception("Could not send Saved Messages alert")
+
+    async def _send_email_alert(self, post_id: int, rule_id: int, rule_name: str, payload: dict) -> None:
+        destination = "email"
+        if not self.db.claim_delivery(post_id, rule_id, destination):
+            return
+        excerpt = re.sub(r"\s+", " ", payload["text"]).strip()[:2_000] or "(media-only post)"
+        subject = f"Telegram alert: {rule_name} — {payload['channel_title']}"
+        body = f"Rule: {rule_name}\nChannel: {payload['channel_title']}\n\n{excerpt}"
+        if payload.get("post_url"):
+            body += f"\n\nOpen in Telegram: {payload['post_url']}"
+        try:
+            await self.email_sender.send(subject, body)
+            self.db.finish_delivery(post_id, rule_id, destination)
+            logger.info(
+                "Sent Gmail alert for rule %s on post %s to %s",
+                rule_name,
+                post_id,
+                self.settings.email_recipient,
+            )
+        except Exception as exc:
+            self.db.finish_delivery(post_id, rule_id, destination, str(exc))
+            logger.exception("Could not send Gmail alert")
+
+    async def _send_bot_alert(self, post_id: int, rule_id: int, rule_name: str, payload: dict) -> None:
+        destination = "telegram_bot"
+        if not self.db.claim_delivery(post_id, rule_id, destination):
+            return
+        excerpt = re.sub(r"\s+", " ", payload["text"]).strip()[:3_000] or "(media-only post)"
+        text = f"🔔 Telegram channel alert\nRule: {rule_name}\nChannel: {payload['channel_title']}\n\n{excerpt}"
+        if payload.get("post_url"):
+            text += f"\n\n{payload['post_url']}"
+        try:
+            await self.bot_sender.send(text)
+            self.db.finish_delivery(post_id, rule_id, destination)
+        except Exception as exc:
+            self.db.finish_delivery(post_id, rule_id, destination, str(exc))
+            logger.exception("Could not send Telegram bot alert")
 
     async def _prune_media(self) -> None:
         cutoff = (datetime.now(UTC) - timedelta(days=self.settings.media_retention_days)).isoformat()

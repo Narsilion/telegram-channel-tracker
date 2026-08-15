@@ -37,6 +37,56 @@ def test_health_endpoint(tmp_path: Path) -> None:
         assert response.json() == {"status": "ok"}
 
 
+def test_posts_days_filter_is_validated(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, channel_ref="123")
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/posts?days=7").status_code == 200
+        assert client.get("/api/posts?days=0").status_code == 422
+        assert client.get("/api/targets/1/posts?days=3651").status_code == 422
+
+
+def test_favicon_is_served(tmp_path: Path) -> None:
+    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        response = client.get("/favicon.svg")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/svg+xml"
+        assert response.text.startswith("<svg")
+
+
+def test_email_preferences_require_configuration(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        missing = client.put("/api/preferences", json={
+            "saved_messages_alerts": True, "email_alerts": True,
+        })
+        assert missing.status_code == 400
+        settings.gmail_address = "sender@gmail.com"
+        settings.email_recipient = "recipient@example.com"
+        enabled = client.put("/api/preferences", json={
+            "saved_messages_alerts": True, "email_alerts": True,
+        })
+        assert enabled.status_code == 200
+        assert enabled.json()["email_alerts"] is True
+        assert enabled.json()["email_recipient"] == "recipient@example.com"
+
+
+def test_bot_preferences_require_configuration(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        missing = client.put("/api/preferences", json={
+            "saved_messages_alerts": False, "telegram_bot_alerts": True,
+        })
+        assert missing.status_code == 400
+        settings.telegram_bot_username = "tracker_alert_bot"
+        settings.telegram_bot_chat_id = 123
+        enabled = client.put("/api/preferences", json={
+            "saved_messages_alerts": False, "telegram_bot_alerts": True,
+        })
+        assert enabled.status_code == 200
+        assert enabled.json()["telegram_bot_alerts"] is True
+        assert enabled.json()["telegram_bot_username"] == "tracker_alert_bot"
+
+
 def test_private_message_link_configures_topic(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path, channel_ref="1163031069")
     with TestClient(create_app(settings)) as client:

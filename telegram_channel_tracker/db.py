@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -408,7 +408,7 @@ class Database:
                 ("failed" if error else "delivered", None if error else utc_now(), error, post_id, rule_id, destination),
             )
 
-    def list_posts(self, *, query: str = "", matched: bool | None = None, topic_id: int | None = None, channel_id: int | None = None, target_id: int | None = None, limit: int = 50, offset: int = 0) -> list[PostRecord]:
+    def list_posts(self, *, query: str = "", matched: bool | None = None, days: int | None = None, topic_id: int | None = None, channel_id: int | None = None, target_id: int | None = None, limit: int = 50, offset: int = 0) -> list[PostRecord]:
         clauses: list[str] = []
         params: list[object] = []
         if query:
@@ -420,6 +420,9 @@ class Database:
         if channel_id is not None:
             clauses.append("p.channel_id=?")
             params.append(channel_id)
+        if days is not None:
+            clauses.append("julianday(p.posted_at) >= julianday(?)")
+            params.append((datetime.now(UTC) - timedelta(days=days)).isoformat())
         if matched is True:
             clauses.append("EXISTS(SELECT 1 FROM matches x JOIN rules r ON r.id=x.rule_id WHERE x.post_id=p.id" + (" AND r.target_id=?" if target_id is not None else "") + ")")
             if target_id is not None:

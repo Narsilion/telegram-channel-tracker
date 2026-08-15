@@ -7,7 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
+from telegram_channel_tracker.assets import FAVICON_SVG
 from telegram_channel_tracker.db import Database
+from telegram_channel_tracker.bot_alerts import bot_is_configured
+from telegram_channel_tracker.email_alerts import gmail_is_configured
 from telegram_channel_tracker.live import LiveBroker
 from telegram_channel_tracker.matching import RuleSpec, matches
 from telegram_channel_tracker.schemas import (
@@ -58,6 +61,15 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
             raise HTTPException(404, "Target not found.")
         return render_dashboard(target_id)
 
+    @app.get("/favicon.svg")
+    @app.get("/favicon.ico")
+    def favicon() -> Response:
+        return Response(
+            content=FAVICON_SVG,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
@@ -86,11 +98,27 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
 
     @app.get("/api/preferences")
     def get_preferences():
-        return {"saved_messages_alerts": settings.saved_messages_alerts}
+        return {
+            "saved_messages_alerts": settings.saved_messages_alerts,
+            "email_alerts": settings.email_alerts,
+            "email_configured": gmail_is_configured(settings),
+            "email_recipient": settings.email_recipient,
+            "telegram_bot_alerts": settings.telegram_bot_alerts,
+            "telegram_bot_configured": bot_is_configured(settings),
+            "telegram_bot_username": settings.telegram_bot_username,
+        }
 
     @app.put("/api/preferences")
     def update_preferences(payload: PreferencesUpdate):
         settings.saved_messages_alerts = payload.saved_messages_alerts
+        if payload.email_alerts is not None:
+            if payload.email_alerts and not gmail_is_configured(settings):
+                raise HTTPException(400, "Run `telegram-channel-tracker setup-email` first.")
+            settings.email_alerts = payload.email_alerts
+        if payload.telegram_bot_alerts is not None:
+            if payload.telegram_bot_alerts and not bot_is_configured(settings):
+                raise HTTPException(400, "Run `telegram-channel-tracker setup-bot` first.")
+            settings.telegram_bot_alerts = payload.telegram_bot_alerts
         save_settings(settings)
         return get_preferences()
 
@@ -167,13 +195,14 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
     @app.get("/api/targets/{target_id}/posts")
     def target_posts(
         target_id: int, q: str = "", matched: bool | None = None,
+        days: int | None = Query(None, ge=1, le=3650),
         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     ):
         target = db.get_target(target_id)
         if target is None:
             raise HTTPException(404, "Target not found.")
         return db.list_posts(
-            query=q, matched=matched, channel_id=target.channel_id,
+            query=q, matched=matched, days=days, channel_id=target.channel_id,
             topic_id=target.topic_id, target_id=target.id, limit=limit, offset=offset,
         )
 
@@ -190,6 +219,12 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
             "media_max_mb": settings.media_max_bytes // (1024 * 1024),
             "media_retention_days": settings.media_retention_days,
             "saved_messages_alerts": settings.saved_messages_alerts,
+            "email_alerts": settings.email_alerts,
+            "email_configured": gmail_is_configured(settings),
+            "email_recipient": settings.email_recipient,
+            "telegram_bot_alerts": settings.telegram_bot_alerts,
+            "telegram_bot_configured": bot_is_configured(settings),
+            "telegram_bot_username": settings.telegram_bot_username,
         }
 
     @app.put("/api/settings")
@@ -203,6 +238,14 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
         settings.media_max_bytes = payload.media_max_mb * 1024 * 1024
         settings.media_retention_days = payload.media_retention_days
         settings.saved_messages_alerts = payload.saved_messages_alerts
+        if payload.email_alerts is not None:
+            if payload.email_alerts and not gmail_is_configured(settings):
+                raise HTTPException(400, "Run `telegram-channel-tracker setup-email` first.")
+            settings.email_alerts = payload.email_alerts
+        if payload.telegram_bot_alerts is not None:
+            if payload.telegram_bot_alerts and not bot_is_configured(settings):
+                raise HTTPException(400, "Run `telegram-channel-tracker setup-bot` first.")
+            settings.telegram_bot_alerts = payload.telegram_bot_alerts
         save_settings(settings)
         if previous_target != (settings.channel_ref, settings.topic_id):
             db.delete_state("last_message_id")
@@ -250,12 +293,13 @@ def create_app(settings: Settings, *, monitor: TelegramMonitor | None = None) ->
     @app.get("/api/posts")
     def list_posts(
         q: str = "", matched: bool | None = None,
+        days: int | None = Query(None, ge=1, le=3650),
         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     ):
         target = next(iter(db.list_targets()), None)
         if target is None:
             return []
-        return db.list_posts(query=q, matched=matched, channel_id=target.channel_id, topic_id=target.topic_id, target_id=target.id, limit=limit, offset=offset)
+        return db.list_posts(query=q, matched=matched, days=days, channel_id=target.channel_id, topic_id=target.topic_id, target_id=target.id, limit=limit, offset=offset)
 
     @app.get("/api/posts/{post_id}")
     def get_post(post_id: int):

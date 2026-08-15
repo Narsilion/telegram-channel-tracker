@@ -37,6 +37,8 @@ class TargetUpdate(BaseModel):
 
 class PreferencesUpdate(BaseModel):
     saved_messages_alerts: bool = True
+    email_alerts: bool | None = None
+    telegram_bot_alerts: bool | None = None
 
 
 class TargetRecord(BaseModel):
@@ -67,6 +69,8 @@ class SettingsUpdate(BaseModel):
     media_max_mb: int = Field(default=25, ge=1, le=2_000)
     media_retention_days: int = Field(default=30, ge=1, le=3650)
     saved_messages_alerts: bool = True
+    email_alerts: bool | None = None
+    telegram_bot_alerts: bool | None = None
 
 
 class PostRecord(BaseModel):

@@ -20,6 +20,12 @@ class Settings:
     media_max_bytes: int = 25 * 1024 * 1024
     media_retention_days: int = 30
     saved_messages_alerts: bool = True
+    email_alerts: bool = False
+    gmail_address: str | None = None
+    email_recipient: str | None = None
+    telegram_bot_alerts: bool = False
+    telegram_bot_username: str | None = None
+    telegram_bot_chat_id: int | None = None
 
     @property
     def db_path(self) -> Path:
@@ -68,6 +74,16 @@ def load_settings() -> Settings:
         media_max_bytes=int(raw.get("media_max_bytes", 25 * 1024 * 1024)),
         media_retention_days=int(raw.get("media_retention_days", 30)),
         saved_messages_alerts=bool(raw.get("saved_messages_alerts", True)),
+        email_alerts=bool(raw.get("email_alerts", False)),
+        gmail_address=os.environ.get("TCT_GMAIL_ADDRESS") or _str_or_none(raw.get("gmail_address")),
+        email_recipient=os.environ.get("TCT_EMAIL_RECIPIENT") or _str_or_none(raw.get("email_recipient")),
+        telegram_bot_alerts=bool(raw.get("telegram_bot_alerts", False)),
+        telegram_bot_username=os.environ.get("TCT_TELEGRAM_BOT_USERNAME") or _str_or_none(raw.get("telegram_bot_username")),
+        telegram_bot_chat_id=(
+            int(os.environ.get("TCT_TELEGRAM_BOT_CHAT_ID") or raw["telegram_bot_chat_id"])
+            if os.environ.get("TCT_TELEGRAM_BOT_CHAT_ID") or raw.get("telegram_bot_chat_id")
+            else None
+        ),
     )
 
 

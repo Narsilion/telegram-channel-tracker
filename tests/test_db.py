@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from telegram_channel_tracker.db import Database
@@ -71,6 +72,18 @@ def test_post_listing_can_be_scoped_to_topic(tmp_path: Path) -> None:
     db.upsert_post(first)
     db.upsert_post(second)
     assert [post.telegram_message_id for post in db.list_posts(topic_id=21043)] == [1]
+
+
+def test_post_listing_can_be_limited_to_days_ago(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    recent = post_payload(1)
+    recent["posted_at"] = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    old = post_payload(2)
+    old["posted_at"] = (datetime.now(UTC) - timedelta(days=8)).isoformat()
+    db.upsert_post(recent)
+    db.upsert_post(old)
+    assert [post.telegram_message_id for post in db.list_posts(days=7)] == [1]
 
 
 def test_delete_media_only_posts_preserves_captioned_media(tmp_path: Path) -> None:
