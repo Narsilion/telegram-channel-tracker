@@ -24,6 +24,15 @@ def test_new_rule_editor_is_collapsed_and_separate_from_rule_list() -> None:
     assert "$('#rule-editor').open=true" in html
 
 
+def test_rule_editor_configures_email_and_telegram_notifications() -> None:
+    html = render_dashboard()
+    assert 'name="email_alerts" type="checkbox" checked' in html
+    assert 'name="telegram_bot_alerts" type="checkbox" checked' in html
+    assert 'Notifications: ${channels}' in html
+    assert "email_alerts:f.get('email_alerts')==='on'" in html
+    assert "telegram_bot_alerts:f.get('telegram_bot_alerts')==='on'" in html
+
+
 def test_disabled_rules_are_grouped_and_collapsed_by_default() -> None:
     html = render_dashboard()
     assert '<div id="enabled-rules"></div>' in html

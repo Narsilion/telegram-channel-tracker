@@ -87,6 +87,8 @@ class Database:
                     match_mode TEXT NOT NULL CHECK(match_mode IN ('any', 'all')),
                     exclude_terms TEXT NOT NULL DEFAULT '[]',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    email_alerts INTEGER NOT NULL DEFAULT 1,
+                    telegram_bot_alerts INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -120,6 +122,10 @@ class Database:
             rule_columns = {row["name"] for row in connection.execute("PRAGMA table_info(rules)").fetchall()}
             if "target_id" not in rule_columns:
                 connection.execute("ALTER TABLE rules ADD COLUMN target_id INTEGER")
+            if "email_alerts" not in rule_columns:
+                connection.execute("ALTER TABLE rules ADD COLUMN email_alerts INTEGER NOT NULL DEFAULT 1")
+            if "telegram_bot_alerts" not in rule_columns:
+                connection.execute("ALTER TABLE rules ADD COLUMN telegram_bot_alerts INTEGER NOT NULL DEFAULT 1")
 
     def bootstrap_legacy_target(
         self, *, channel_ref: str | None, topic_id: int | None, backfill_limit: int
@@ -336,8 +342,15 @@ class Database:
         now = utc_now()
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO rules(name, include_terms, match_mode, exclude_terms, enabled, created_at, updated_at, target_id) VALUES(?,?,?,?,?,?,?,?)",
-                (payload.name, json.dumps(payload.include_terms), payload.match_mode, json.dumps(payload.exclude_terms), int(payload.enabled), now, now, target_id),
+                """INSERT INTO rules(
+                    name, include_terms, match_mode, exclude_terms, enabled,
+                    email_alerts, telegram_bot_alerts, created_at, updated_at, target_id
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    payload.name, json.dumps(payload.include_terms), payload.match_mode,
+                    json.dumps(payload.exclude_terms), int(payload.enabled),
+                    int(payload.email_alerts), int(payload.telegram_bot_alerts), now, now, target_id,
+                ),
             )
             row = connection.execute("SELECT * FROM rules WHERE id=?", (cursor.lastrowid,)).fetchone()
         return self._rule(row)
@@ -345,8 +358,13 @@ class Database:
     def update_rule(self, rule_id: int, payload: RuleUpsert) -> RuleRecord | None:
         with self.connect() as connection:
             connection.execute(
-                "UPDATE rules SET name=?, include_terms=?, match_mode=?, exclude_terms=?, enabled=?, updated_at=? WHERE id=?",
-                (payload.name, json.dumps(payload.include_terms), payload.match_mode, json.dumps(payload.exclude_terms), int(payload.enabled), utc_now(), rule_id),
+                """UPDATE rules SET name=?, include_terms=?, match_mode=?, exclude_terms=?,
+                enabled=?, email_alerts=?, telegram_bot_alerts=?, updated_at=? WHERE id=?""",
+                (
+                    payload.name, json.dumps(payload.include_terms), payload.match_mode,
+                    json.dumps(payload.exclude_terms), int(payload.enabled),
+                    int(payload.email_alerts), int(payload.telegram_bot_alerts), utc_now(), rule_id,
+                ),
             )
             row = connection.execute("SELECT * FROM rules WHERE id=?", (rule_id,)).fetchone()
         return self._rule(row) if row else None
@@ -461,7 +479,9 @@ class Database:
         return RuleRecord(
             id=row["id"], target_id=int(row["target_id"] or 0), name=row["name"], include_terms=json.loads(row["include_terms"]),
             match_mode=row["match_mode"], exclude_terms=json.loads(row["exclude_terms"]),
-            enabled=bool(row["enabled"]), created_at=row["created_at"], updated_at=row["updated_at"],
+            enabled=bool(row["enabled"]), email_alerts=bool(row["email_alerts"]),
+            telegram_bot_alerts=bool(row["telegram_bot_alerts"]),
+            created_at=row["created_at"], updated_at=row["updated_at"],
         )
 
     @staticmethod

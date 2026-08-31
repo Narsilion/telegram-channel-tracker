@@ -1,8 +1,8 @@
 # Telegram Channel Tracker
 
-A local web dashboard that uses your personal Telegram account to track multiple channels or supergroup topics, match target-specific keyword rules, show browser notifications, and send matching alerts to **Saved Messages** or email.
+A local web dashboard that uses your personal Telegram account to track multiple channels or supergroup topics, match target-specific keyword rules, show browser notifications, and send matching alerts to **Saved Messages**, email, or a private Telegram bot.
 
-The tracker is read-only toward the configured channel. It does not join channels, post, react, forward, or perform moderation actions. The only outbound Telegram action is sending configured alerts to your own Saved Messages.
+The tracker is read-only toward configured channels. It does not post, react, forward, or perform moderation actions in them. Its outbound Telegram actions are limited to configured alerts sent to your own Saved Messages or private alert-bot chat.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Treat `.data/telegram.session` like a password: anyone who obtains it may be abl
 .venv/bin/telegram-channel-tracker run
 ```
 
-Open <http://127.0.0.1:8775>. The main page shows one card per tracked channel or topic. Add targets by username or Telegram link, then open a card to manage its rules and archive. A live match is sent to Saved Messages once per matching rule and shown as a browser notification when the dashboard is open and notification permission is granted.
+Open <http://127.0.0.1:8775>. The main page shows one card per tracked channel or topic. Add targets by username or Telegram link, then open a card to manage its rules and archive. Each rule can independently enable email and Telegram-bot notifications; the matching global notification switch must also be enabled. A live match is sent to Saved Messages once per matching rule and shown as a browser notification when the dashboard is open and notification permission is granted.
 
 ## Gmail alerts
 

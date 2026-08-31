@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -60,6 +61,46 @@ def test_disabled_rule_does_not_match(tmp_path: Path) -> None:
     db.create_rule(RuleUpsert(name="Launch", include_terms=["launch"], enabled=False))
     db.recompute_all_matches()
     assert db.get_post(post_id).matched_rule_names == []
+
+
+def test_rule_notification_preferences_are_persisted(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    rule = db.create_rule(RuleUpsert(
+        name="Launch", include_terms=["launch"],
+        email_alerts=False, telegram_bot_alerts=True,
+    ))
+    assert rule.email_alerts is False
+    assert rule.telegram_bot_alerts is True
+    updated = db.update_rule(rule.id, RuleUpsert(
+        name="Launch", include_terms=["launch"],
+        email_alerts=True, telegram_bot_alerts=False,
+    ))
+    assert updated is not None
+    assert updated.email_alerts is True
+    assert updated.telegram_bot_alerts is False
+
+
+def test_existing_rules_keep_all_notification_destinations_enabled(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("""CREATE TABLE rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+            include_terms TEXT NOT NULL, match_mode TEXT NOT NULL,
+            exclude_terms TEXT NOT NULL DEFAULT '[]', enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, target_id INTEGER
+        )""")
+        connection.execute(
+            """INSERT INTO rules(
+                name, include_terms, match_mode, exclude_terms, enabled,
+                created_at, updated_at, target_id
+            ) VALUES('Legacy', '[\"launch\"]', 'any', '[]', 1, 'now', 'now', 1)"""
+        )
+    db = Database(path)
+    db.initialize()
+    rule = db.list_rules()[0]
+    assert rule.email_alerts is True
+    assert rule.telegram_bot_alerts is True
 
 
 def test_post_listing_can_be_scoped_to_topic(tmp_path: Path) -> None:

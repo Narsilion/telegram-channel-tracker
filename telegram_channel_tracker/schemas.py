@@ -11,6 +11,8 @@ class RuleUpsert(BaseModel):
     match_mode: Literal["any", "all"] = "any"
     exclude_terms: list[str] = Field(default_factory=list)
     enabled: bool = True
+    email_alerts: bool = True
+    telegram_bot_alerts: bool = True
 
     @field_validator("include_terms", "exclude_terms")
     @classmethod

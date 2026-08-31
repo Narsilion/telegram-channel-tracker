@@ -12,15 +12,20 @@ def test_rules_and_settings_api(tmp_path: Path) -> None:
         created = client.post("/api/rules", json={"name": "Launch", "include_terms": ["launch"], "match_mode": "any"})
         assert created.status_code == 201
         rule_id = created.json()["id"]
+        assert created.json()["email_alerts"] is True
+        assert created.json()["telegram_bot_alerts"] is True
         assert client.get("/api/rules").json()[0]["name"] == "Launch"
         edited = client.put(f"/api/rules/{rule_id}", json={
             "name": "Edited launch", "include_terms": ["Люлька"],
             "exclude_terms": ["Люлька для коляски"], "match_mode": "any", "enabled": False,
+            "email_alerts": False, "telegram_bot_alerts": True,
         })
         assert edited.status_code == 200
         assert edited.json()["name"] == "Edited launch"
         assert edited.json()["exclude_terms"] == ["Люлька для коляски"]
         assert edited.json()["enabled"] is False
+        assert edited.json()["email_alerts"] is False
+        assert edited.json()["telegram_bot_alerts"] is True
         updated = client.put("/api/settings", json={
             "channel_ref": "@new", "backfill_limit": 100, "media_max_mb": 25,
             "media_retention_days": 30, "saved_messages_alerts": True,

@@ -242,10 +242,12 @@ class TelegramMonitor:
                 await self._send_saved_alert(post_id, rule.id, rule.name, payload)
         if live and matched_rules and self.settings.email_alerts:
             for rule in matched_rules:
-                await self._send_email_alert(post_id, rule.id, rule.name, payload)
+                if rule.email_alerts:
+                    await self._send_email_alert(post_id, rule.id, rule.name, payload)
         if live and matched_rules and self.settings.telegram_bot_alerts:
             for rule in matched_rules:
-                await self._send_bot_alert(post_id, rule.id, rule.name, payload)
+                if rule.telegram_bot_alerts:
+                    await self._send_bot_alert(post_id, rule.id, rule.name, payload)
         post = self.db.get_post(post_id)
         await self.broker.broadcast(
             {
