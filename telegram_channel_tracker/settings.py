@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -21,6 +22,8 @@ class Settings:
     media_retention_days: int = 30
     saved_messages_alerts: bool = True
     email_alerts: bool = False
+    gmail_keychain_account: str | None = None
+    bot_keychain_account: str | None = None
     gmail_address: str | None = None
     email_recipient: str | None = None
     telegram_bot_alerts: bool = False
@@ -75,12 +78,14 @@ def load_settings() -> Settings:
         media_retention_days=int(raw.get("media_retention_days", 30)),
         saved_messages_alerts=bool(raw.get("saved_messages_alerts", True)),
         email_alerts=bool(raw.get("email_alerts", False)),
-        gmail_address=os.environ.get("TCT_GMAIL_ADDRESS") or _str_or_none(raw.get("gmail_address")),
-        email_recipient=os.environ.get("TCT_EMAIL_RECIPIENT") or _str_or_none(raw.get("email_recipient")),
+        gmail_keychain_account=_str_or_none(raw.get("gmail_keychain_account")),
+        bot_keychain_account=_str_or_none(raw.get("bot_keychain_account")),
+        gmail_address=(_str_or_none(raw.get("gmail_address")) if raw.get("gmail_keychain_account") else os.environ.get("TCT_GMAIL_ADDRESS") or _str_or_none(raw.get("gmail_address"))),
+        email_recipient=(_str_or_none(raw.get("email_recipient")) if raw.get("gmail_keychain_account") else os.environ.get("TCT_EMAIL_RECIPIENT") or _str_or_none(raw.get("email_recipient"))),
         telegram_bot_alerts=bool(raw.get("telegram_bot_alerts", False)),
-        telegram_bot_username=os.environ.get("TCT_TELEGRAM_BOT_USERNAME") or _str_or_none(raw.get("telegram_bot_username")),
+        telegram_bot_username=(_str_or_none(raw.get("telegram_bot_username")) if raw.get("bot_keychain_account") else os.environ.get("TCT_TELEGRAM_BOT_USERNAME") or _str_or_none(raw.get("telegram_bot_username"))),
         telegram_bot_chat_id=(
-            int(os.environ.get("TCT_TELEGRAM_BOT_CHAT_ID") or raw["telegram_bot_chat_id"])
+            int(raw["telegram_bot_chat_id"] if raw.get("bot_keychain_account") else os.environ.get("TCT_TELEGRAM_BOT_CHAT_ID") or raw["telegram_bot_chat_id"])
             if os.environ.get("TCT_TELEGRAM_BOT_CHAT_ID") or raw.get("telegram_bot_chat_id")
             else None
         ),
@@ -91,8 +96,16 @@ def save_settings(settings: Settings) -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     payload = asdict(settings)
     payload.pop("data_dir")
-    settings.config_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.chmod(settings.config_path, 0o600)
+    descriptor, temporary = tempfile.mkstemp(dir=settings.data_dir, prefix='.config-')
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
+            output.write(json.dumps(payload, indent=2) + '\n')
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, settings.config_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _str_or_none(value: object) -> str | None:

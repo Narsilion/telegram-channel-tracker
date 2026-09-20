@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from telegram_channel_tracker.matching import RuleSpec, matches
+from telegram_channel_tracker.matching import RuleSpec, matched_spans, matches, normalize
 from telegram_channel_tracker.schemas import PostRecord, RuleRecord, RuleUpsert, TargetRecord, TargetUpdate
 
 
@@ -30,7 +30,7 @@ class Database:
         finally:
             connection.close()
 
-    def initialize(self) -> None:
+    def initialize(self, *, saved_messages_alerts: bool = True) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
@@ -122,6 +122,8 @@ class Database:
             rule_columns = {row["name"] for row in connection.execute("PRAGMA table_info(rules)").fetchall()}
             if "target_id" not in rule_columns:
                 connection.execute("ALTER TABLE rules ADD COLUMN target_id INTEGER")
+            if "saved_messages_alerts" not in rule_columns:
+                connection.execute(f"ALTER TABLE rules ADD COLUMN saved_messages_alerts INTEGER NOT NULL DEFAULT {int(saved_messages_alerts)}")
             if "email_alerts" not in rule_columns:
                 connection.execute("ALTER TABLE rules ADD COLUMN email_alerts INTEGER NOT NULL DEFAULT 1")
             if "telegram_bot_alerts" not in rule_columns:
@@ -344,12 +346,12 @@ class Database:
             cursor = connection.execute(
                 """INSERT INTO rules(
                     name, include_terms, match_mode, exclude_terms, enabled,
-                    email_alerts, telegram_bot_alerts, created_at, updated_at, target_id
-                ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    saved_messages_alerts, email_alerts, telegram_bot_alerts, created_at, updated_at, target_id
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     payload.name, json.dumps(payload.include_terms), payload.match_mode,
                     json.dumps(payload.exclude_terms), int(payload.enabled),
-                    int(payload.email_alerts), int(payload.telegram_bot_alerts), now, now, target_id,
+                    int(payload.saved_messages_alerts), int(payload.email_alerts), int(payload.telegram_bot_alerts), now, now, target_id,
                 ),
             )
             row = connection.execute("SELECT * FROM rules WHERE id=?", (cursor.lastrowid,)).fetchone()
@@ -359,11 +361,11 @@ class Database:
         with self.connect() as connection:
             connection.execute(
                 """UPDATE rules SET name=?, include_terms=?, match_mode=?, exclude_terms=?,
-                enabled=?, email_alerts=?, telegram_bot_alerts=?, updated_at=? WHERE id=?""",
+                enabled=?, saved_messages_alerts=?, email_alerts=?, telegram_bot_alerts=?, updated_at=? WHERE id=?""",
                 (
                     payload.name, json.dumps(payload.include_terms), payload.match_mode,
                     json.dumps(payload.exclude_terms), int(payload.enabled),
-                    int(payload.email_alerts), int(payload.telegram_bot_alerts), utc_now(), rule_id,
+                    int(payload.saved_messages_alerts), int(payload.email_alerts), int(payload.telegram_bot_alerts), utc_now(), rule_id,
                 ),
             )
             row = connection.execute("SELECT * FROM rules WHERE id=?", (rule_id,)).fetchone()
@@ -426,12 +428,15 @@ class Database:
                 ("failed" if error else "delivered", None if error else utc_now(), error, post_id, rule_id, destination),
             )
 
-    def list_posts(self, *, query: str = "", matched: bool | None = None, days: int | None = None, topic_id: int | None = None, channel_id: int | None = None, target_id: int | None = None, limit: int = 50, offset: int = 0) -> list[PostRecord]:
+    def list_posts(self, *, query: str = "", exclude_terms: list[str] | None = None, matched: bool | None = None, days: int | None = None, topic_id: int | None = None, channel_id: int | None = None, target_id: int | None = None, limit: int = 50, offset: int = 0) -> list[PostRecord]:
         clauses: list[str] = []
         params: list[object] = []
         if query:
             clauses.append("p.text LIKE ?")
             params.append(f"%{query}%")
+        for term in dict.fromkeys(normalize(term.strip()) for term in (exclude_terms or []) if term.strip()):
+            clauses.append("instr(normalize_text(p.text), ?) = 0")
+            params.append(term)
         if topic_id is not None:
             clauses.append("p.topic_id=?")
             params.append(topic_id)
@@ -451,6 +456,7 @@ class Database:
                 params.append(target_id)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self.connect() as connection:
+            connection.create_function("normalize_text", 1, normalize, deterministic=True)
             rows = connection.execute(
                 f"SELECT p.* FROM posts p{where} ORDER BY p.posted_at DESC LIMIT ? OFFSET ?",
                 (*params, limit, offset),
@@ -479,7 +485,7 @@ class Database:
         return RuleRecord(
             id=row["id"], target_id=int(row["target_id"] or 0), name=row["name"], include_terms=json.loads(row["include_terms"]),
             match_mode=row["match_mode"], exclude_terms=json.loads(row["exclude_terms"]),
-            enabled=bool(row["enabled"]), email_alerts=bool(row["email_alerts"]),
+            enabled=bool(row["enabled"]), saved_messages_alerts=bool(row["saved_messages_alerts"]), email_alerts=bool(row["email_alerts"]),
             telegram_bot_alerts=bool(row["telegram_bot_alerts"]),
             created_at=row["created_at"], updated_at=row["updated_at"],
         )
@@ -495,7 +501,7 @@ class Database:
     @staticmethod
     def _post(connection: sqlite3.Connection, row: sqlite3.Row) -> PostRecord:
         rule_rows = connection.execute(
-            "SELECT r.name FROM matches x JOIN rules r ON r.id=x.rule_id WHERE x.post_id=? ORDER BY r.name", (row["id"],)
+            "SELECT r.name, r.include_terms FROM matches x JOIN rules r ON r.id=x.rule_id WHERE x.post_id=? ORDER BY r.name", (row["id"],)
         ).fetchall()
         media_rows = connection.execute(
             "SELECT kind,file_name,mime_type,size_bytes,local_path,status,detail FROM media WHERE post_id=? ORDER BY id", (row["id"],)
@@ -505,5 +511,6 @@ class Database:
             channel_title=row["channel_title"], channel_username=row["channel_username"], text=row["text"],
             posted_at=row["posted_at"], edited_at=row["edited_at"], deleted_at=row["deleted_at"], views=row["views"],
             forwards=row["forwards"], grouped_id=row["grouped_id"], post_url=row["post_url"],
+            matched_spans=matched_spans(row["text"], [term for r in rule_rows for term in json.loads(r["include_terms"])]),
             matched_rule_names=[r["name"] for r in rule_rows], media=[dict(m) for m in media_rows],
         )

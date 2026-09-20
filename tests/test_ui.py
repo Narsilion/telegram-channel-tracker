@@ -98,17 +98,24 @@ def test_blocked_browser_alert_button_shows_unblocking_steps() -> None:
     assert "Notification.permission==='denied'){showBrowserAlertHelp();return}" in html
 
 
-def test_home_page_shows_email_alert_configuration() -> None:
-    html = render_home()
-    assert 'id="email-alerts"' in html
-    assert 'id="email-status"' in html
-    assert "email_configured" in html
-    assert "telegram-channel-tracker setup-email" in html
+def test_account_setup_lives_on_settings_page() -> None:
+    from telegram_channel_tracker.ui import render_settings
+
+    for html in (render_home(), render_dashboard()):
+        assert 'href="/settings"' in html
+        assert 'id="email-status"' not in html
+        assert 'id="bot-status"' not in html
+    html = render_settings()
+    assert 'id="password" name="password" type="password"' in html
+    assert 'id="token" name="token" type="password"' in html
+    assert 'Send test email &amp; save' in html
+    assert 'Send test alert &amp; save' in html
+    assert 'localStorage' not in html
+    assert 'id="notify"' not in html
 
 
-def test_home_page_shows_telegram_bot_alert_configuration() -> None:
-    html = render_home()
-    assert 'id="bot-alerts"' in html
-    assert 'id="bot-status"' in html
-    assert "telegram_bot_configured" in html
-    assert "telegram-channel-tracker setup-bot" in html
+def test_posts_exclusion_control_sends_multiple_terms() -> None:
+    html = render_dashboard()
+    assert 'id="exclude-search"' in html
+    assert "q.append('exclude_terms',term)" in html
+    assert "$('#exclude-search').oninput=schedulePosts" in html

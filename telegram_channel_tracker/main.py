@@ -11,9 +11,8 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
 from telegram_channel_tracker.app import create_app
-from telegram_channel_tracker.bot_alerts import TelegramBotAlertSender, call_bot_api, store_bot_token
 from telegram_channel_tracker.db import Database
-from telegram_channel_tracker.email_alerts import GmailAlertSender, store_gmail_app_password
+from telegram_channel_tracker.notification_setup import NotificationSetup, SetupError
 from telegram_channel_tracker.settings import Settings, load_settings, save_settings
 from telegram_channel_tracker.telegram_refs import is_trackable_channel, parse_channel_target, resolve_channel, resolve_topic_id
 
@@ -108,73 +107,28 @@ async def run_setup(args: argparse.Namespace) -> None:
 
 async def run_email_setup(args: argparse.Namespace) -> None:
     settings = load_settings()
-    gmail_address = (args.gmail or settings.gmail_address or input("Gmail address: ")).strip()
-    if "@" not in gmail_address:
-        raise SystemExit("Enter a valid Gmail address.")
-    recipient = (args.recipient or settings.email_recipient or input(f"Alert recipient [{gmail_address}]: ").strip() or gmail_address).strip()
-    if "@" not in recipient:
-        raise SystemExit("Enter a valid recipient email address.")
-    app_password = getpass.getpass("Gmail App Password (hidden, spaces are optional): ")
-    store_gmail_app_password(gmail_address, app_password)
-    settings.gmail_address = gmail_address
-    settings.email_recipient = recipient
-    settings.email_alerts = False
-    save_settings(settings)
-    print(f"Sending a test email to {recipient}...")
+    setup = NotificationSetup(settings)
+    sender = (args.gmail or settings.gmail_address or input("Gmail address: ")).strip()
+    recipient = (args.recipient or settings.email_recipient or input(f"Alert recipient [{sender}]: ").strip() or sender).strip()
+    password = getpass.getpass("Gmail App Password (blank keeps stored password): ")
     try:
-        await GmailAlertSender(settings).send(
-            "Telegram Channel Tracker test",
-            "Gmail alerts are configured. New live rule matches can now be emailed to this address.",
-        )
-    except Exception as exc:
-        raise SystemExit(f"Test email failed; email alerts remain disabled: {exc}") from exc
-    settings.email_alerts = True
-    save_settings(settings)
-    print(f"Test email sent. Email alerts are enabled for {recipient}.")
+        await setup.save_email(sender, recipient, password)
+    except SetupError as exc:
+        raise SystemExit(str(exc)) from None
+    print("Test email sent and setup saved. Select Email in each rule. Restart the tracker if it is running.")
 
 
 async def run_bot_setup() -> None:
-    settings = load_settings()
+    setup = NotificationSetup(load_settings())
     token = getpass.getpass("BotFather token (hidden): ").strip()
     try:
-        bot = await asyncio.to_thread(call_bot_api, token, "getMe")
-    except Exception as exc:
-        raise SystemExit(f"Could not validate bot token: {exc}") from exc
-    if not isinstance(bot, dict) or not bot.get("username"):
-        raise SystemExit("Telegram did not return a bot username.")
-    username = str(bot["username"])
-    print(f"Open https://t.me/{username} from the Telegram account that should receive alerts and press Start.")
-    input("Press Enter here after you have started the bot...")
-    try:
-        updates = await asyncio.to_thread(
-            call_bot_api, token, "getUpdates", {"timeout": 0, "allowed_updates": ["message"]}
-        )
-    except Exception as exc:
-        raise SystemExit(f"Could not read the bot conversation: {exc}") from exc
-    private_messages = [
-        update["message"] for update in (updates or [])
-        if isinstance(update, dict)
-        and isinstance(update.get("message"), dict)
-        and update["message"].get("chat", {}).get("type") == "private"
-    ]
-    if not private_messages:
-        raise SystemExit(f"No private conversation found. Open https://t.me/{username}, press Start, and run setup-bot again.")
-    chat_id = int(private_messages[-1]["chat"]["id"])
-    settings.telegram_bot_username = username
-    settings.telegram_bot_chat_id = chat_id
-    settings.telegram_bot_alerts = False
-    save_settings(settings)
-    store_bot_token(username, token)
-    print("Sending a test Telegram alert...")
-    try:
-        await TelegramBotAlertSender(settings).send(
-            "🔔 Telegram Channel Tracker test\nIncoming bot alerts are configured."
-        )
-    except Exception as exc:
-        raise SystemExit(f"Test bot alert failed; bot alerts remain disabled: {exc}") from exc
-    settings.telegram_bot_alerts = True
-    save_settings(settings)
-    print(f"Test alert sent by @{username}. Bot alerts are enabled; restart Telegram Channel Tracker.")
+        connection = await setup.begin_bot(token)
+        print(f"Open {connection['url']} in Telegram and press Start using the recipient account.")
+        input("Press Enter after starting the bot...")
+        await setup.finish_bot(connection['connection_id'])
+    except SetupError as exc:
+        raise SystemExit(str(exc)) from None
+    print("Test alert sent and setup saved. Select Telegram in each rule. Restart the tracker if it is running.")
 
 
 def _prompt_int(prompt: str) -> int:

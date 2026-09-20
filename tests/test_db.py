@@ -68,8 +68,9 @@ def test_rule_notification_preferences_are_persisted(tmp_path: Path) -> None:
     db.initialize()
     rule = db.create_rule(RuleUpsert(
         name="Launch", include_terms=["launch"],
-        email_alerts=False, telegram_bot_alerts=True,
+        saved_messages_alerts=False, email_alerts=False, telegram_bot_alerts=True,
     ))
+    assert rule.saved_messages_alerts is False
     assert rule.email_alerts is False
     assert rule.telegram_bot_alerts is True
     updated = db.update_rule(rule.id, RuleUpsert(
@@ -77,6 +78,7 @@ def test_rule_notification_preferences_are_persisted(tmp_path: Path) -> None:
         email_alerts=True, telegram_bot_alerts=False,
     ))
     assert updated is not None
+    assert updated.saved_messages_alerts is True
     assert updated.email_alerts is True
     assert updated.telegram_bot_alerts is False
 
@@ -142,3 +144,27 @@ def test_delete_media_only_posts_preserves_captioned_media(tmp_path: Path) -> No
     assert paths == ["/tmp/blank.jpg"]
     assert db.get_post(blank_id) is None
     assert db.get_post(captioned_id) is not None
+
+
+def test_post_highlights_only_phrases_from_matching_rules(tmp_path: Path) -> None:
+    db = Database(tmp_path / 'test.db')
+    db.initialize()
+    post_id, _ = db.upsert_post(post_payload())
+    db.create_rule(RuleUpsert(name='Launch', include_terms=['launch', 'absent']))
+    db.create_rule(RuleUpsert(name='Excluded', include_terms=['product'], exclude_terms=['today']))
+    db.create_rule(RuleUpsert(name='Disabled', include_terms=['Official'], enabled=False))
+    db.recompute_all_matches()
+    post = db.get_post(post_id)
+    assert [post.text[start:end] for start, end in post.matched_spans] == ['launch']
+
+
+def test_saved_messages_migration_preserves_previous_preference(tmp_path: Path) -> None:
+    db = Database(tmp_path / 'test.db')
+    db.initialize()
+    rule = db.create_rule(RuleUpsert(name='Launch', include_terms=['launch']))
+    with db.connect() as connection:
+        connection.execute('ALTER TABLE rules DROP COLUMN saved_messages_alerts')
+    db.initialize(saved_messages_alerts=False)
+    assert db.list_rules()[0].saved_messages_alerts is False
+    db.initialize(saved_messages_alerts=True)
+    assert db.list_rules()[0].saved_messages_alerts is False

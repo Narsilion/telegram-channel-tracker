@@ -41,3 +41,37 @@ def test_card_index_and_target_detail_are_available(tmp_path: Path) -> None:
         cards = client.get("/api/targets").json()
         assert cards[0]["topic_id"] == 21043
 
+
+def test_increasing_target_limit_requests_a_fresh_backfill(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, channel_ref="1163031069", topic_id=21043)
+    app = create_app(settings)
+    target = app.state.db.list_targets()[0]
+    app.state.db.set_target_state(target.id, "backfill_target", "1163031069:21043")
+    app.state.db.set_target_state(target.id, "last_message_id", "900")
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/targets/{target.id}",
+            json={"enabled": True, "backfill_limit": 200},
+        )
+
+    assert response.status_code == 200
+    assert app.state.db.get_target_state(target.id, "backfill_target") is None
+    assert app.state.db.get_target_state(target.id, "last_message_id") == "900"
+
+
+def test_unchanged_target_limit_preserves_completed_backfill(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, channel_ref="1163031069", topic_id=21043)
+    app = create_app(settings)
+    target = app.state.db.list_targets()[0]
+    marker = "1163031069:21043"
+    app.state.db.set_target_state(target.id, "backfill_target", marker)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/targets/{target.id}",
+            json={"enabled": True, "backfill_limit": target.backfill_limit},
+        )
+
+    assert response.status_code == 200
+    assert app.state.db.get_target_state(target.id, "backfill_target") == marker

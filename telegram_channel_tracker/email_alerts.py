@@ -5,6 +5,7 @@ import os
 import smtplib
 import ssl
 import subprocess
+from dataclasses import replace
 from email.message import EmailMessage
 
 from telegram_channel_tracker.settings import Settings
@@ -40,7 +41,7 @@ def store_gmail_app_password(gmail_address: str, app_password: str) -> None:
 
 def load_gmail_app_password(settings: Settings) -> str:
     environment_password = os.environ.get("TCT_GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
-    if environment_password:
+    if environment_password and not settings.gmail_keychain_account:
         return environment_password
     if not settings.gmail_address:
         raise GmailConfigurationError("Gmail address is not configured.")
@@ -48,7 +49,7 @@ def load_gmail_app_password(settings: Settings) -> str:
         result = subprocess.run(
             [
                 "/usr/bin/security", "find-generic-password",
-                "-s", KEYCHAIN_SERVICE, "-a", settings.gmail_address, "-w",
+                "-s", KEYCHAIN_SERVICE, "-a", settings.gmail_keychain_account or settings.gmail_address, "-w",
             ],
             check=True,
             capture_output=True,
@@ -69,14 +70,17 @@ class GmailAlertSender:
         self.settings = settings
         self.attempts = attempts
 
-    async def send(self, subject: str, body: str) -> None:
-        if not gmail_is_configured(self.settings):
+    async def send(self, subject: str, body: str, *, password: str | None = None) -> None:
+        snapshot = replace(self.settings)
+        sender = GmailAlertSender(snapshot, attempts=self.attempts)
+        if not gmail_is_configured(snapshot):
             raise GmailConfigurationError("Gmail alerts are not configured.")
-        password = load_gmail_app_password(self.settings)
+        if password is None:
+            password = await asyncio.to_thread(load_gmail_app_password, snapshot)
         last_error: Exception | None = None
         for attempt in range(self.attempts):
             try:
-                await asyncio.to_thread(self._send_once, subject, body, password)
+                await asyncio.to_thread(sender._send_once, subject, body, password)
                 return
             except (OSError, smtplib.SMTPException) as exc:
                 last_error = exc

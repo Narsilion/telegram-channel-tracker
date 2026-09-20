@@ -11,6 +11,7 @@ class RuleUpsert(BaseModel):
     match_mode: Literal["any", "all"] = "any"
     exclude_terms: list[str] = Field(default_factory=list)
     enabled: bool = True
+    saved_messages_alerts: bool = True
     email_alerts: bool = True
     telegram_bot_alerts: bool = True
 
@@ -35,12 +36,6 @@ class TargetCreate(BaseModel):
 class TargetUpdate(BaseModel):
     enabled: bool = True
     backfill_limit: int = Field(default=100, ge=1, le=10_000)
-
-
-class PreferencesUpdate(BaseModel):
-    saved_messages_alerts: bool = True
-    email_alerts: bool | None = None
-    telegram_bot_alerts: bool | None = None
 
 
 class TargetRecord(BaseModel):
@@ -70,9 +65,6 @@ class SettingsUpdate(BaseModel):
     download_media: bool = False
     media_max_mb: int = Field(default=25, ge=1, le=2_000)
     media_retention_days: int = Field(default=30, ge=1, le=3650)
-    saved_messages_alerts: bool = True
-    email_alerts: bool | None = None
-    telegram_bot_alerts: bool | None = None
 
 
 class PostRecord(BaseModel):
@@ -89,6 +81,7 @@ class PostRecord(BaseModel):
     forwards: int | None = None
     grouped_id: int | None = None
     post_url: str | None = None
+    matched_spans: list[tuple[int, int]] = Field(default_factory=list)
     matched_rule_names: list[str] = Field(default_factory=list)
     media: list[dict] = Field(default_factory=list)
 

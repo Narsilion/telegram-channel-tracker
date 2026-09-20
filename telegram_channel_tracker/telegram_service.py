@@ -11,8 +11,8 @@ from telethon import TelegramClient, events, utils
 from telethon.errors import FloodWaitError
 
 from telegram_channel_tracker.db import Database
-from telegram_channel_tracker.bot_alerts import TelegramBotAlertSender
-from telegram_channel_tracker.email_alerts import GmailAlertSender
+from telegram_channel_tracker.bot_alerts import TelegramBotAlertSender, bot_is_configured
+from telegram_channel_tracker.email_alerts import GmailAlertSender, gmail_is_configured
 from telegram_channel_tracker.live import LiveBroker
 from telegram_channel_tracker.schemas import StatusResponse, TargetRecord
 from telegram_channel_tracker.settings import Settings
@@ -237,14 +237,15 @@ class TelegramMonitor:
                 if self.db.claim_delivery(post_id, rule.id, "browser"):
                     self.db.finish_delivery(post_id, rule.id, "browser")
                     should_alert = True
-        if live and matched_rules and self.settings.saved_messages_alerts:
+        if live and matched_rules:
             for rule in matched_rules:
-                await self._send_saved_alert(post_id, rule.id, rule.name, payload)
-        if live and matched_rules and self.settings.email_alerts:
+                if rule.saved_messages_alerts:
+                    await self._send_saved_alert(post_id, rule.id, rule.name, payload)
+        if live and matched_rules and gmail_is_configured(self.settings):
             for rule in matched_rules:
                 if rule.email_alerts:
                     await self._send_email_alert(post_id, rule.id, rule.name, payload)
-        if live and matched_rules and self.settings.telegram_bot_alerts:
+        if live and matched_rules and bot_is_configured(self.settings):
             for rule in matched_rules:
                 if rule.telegram_bot_alerts:
                     await self._send_bot_alert(post_id, rule.id, rule.name, payload)

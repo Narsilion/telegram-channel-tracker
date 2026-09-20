@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import subprocess
+from dataclasses import replace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -38,7 +39,7 @@ def store_bot_token(bot_username: str, token: str) -> None:
 
 def load_bot_token(settings: Settings) -> str:
     environment_token = os.environ.get("TCT_TELEGRAM_BOT_TOKEN", "").strip()
-    if environment_token:
+    if environment_token and not settings.bot_keychain_account:
         return environment_token
     if not settings.telegram_bot_username:
         raise TelegramBotError("Telegram alert bot is not configured.")
@@ -46,7 +47,7 @@ def load_bot_token(settings: Settings) -> str:
         result = subprocess.run(
             [
                 "/usr/bin/security", "find-generic-password",
-                "-s", KEYCHAIN_SERVICE, "-a", settings.telegram_bot_username, "-w",
+                "-s", KEYCHAIN_SERVICE, "-a", settings.bot_keychain_account or settings.telegram_bot_username, "-w",
             ],
             check=True,
             capture_output=True,
@@ -91,9 +92,10 @@ class TelegramBotAlertSender:
         self.attempts = attempts
 
     async def send(self, text: str) -> None:
-        if not bot_is_configured(self.settings):
+        snapshot = replace(self.settings)
+        if not bot_is_configured(snapshot):
             raise TelegramBotError("Telegram alert bot is not configured.")
-        token = load_bot_token(self.settings)
+        token = await asyncio.to_thread(load_bot_token, snapshot)
         last_error: Exception | None = None
         for attempt in range(self.attempts):
             try:
@@ -102,7 +104,7 @@ class TelegramBotAlertSender:
                     token,
                     "sendMessage",
                     {
-                        "chat_id": self.settings.telegram_bot_chat_id,
+                        "chat_id": snapshot.telegram_bot_chat_id,
                         "text": text,
                         "disable_web_page_preview": True,
                     },
